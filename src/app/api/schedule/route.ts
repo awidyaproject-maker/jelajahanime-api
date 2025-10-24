@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import AnimeScraper from '@/lib/scraper';
 import { ScheduleScraper } from '@/lib/scrapers/scheduleScraper';
 import { ApiResponse } from '@/types/anime';
 

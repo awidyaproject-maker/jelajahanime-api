@@ -1,5 +1,5 @@
 import { NextResponse, NextRequest } from 'next/server';
-import AnimeScraper from '@/lib/scraper';
+import { LatestAnimeScraper } from '@/lib/scrapers';
 import { ApiResponse } from '@/types/anime';
 
 export async function GET(request: NextRequest) {
@@ -8,7 +8,7 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get('limit') || '20', 10);
     const page = parseInt(searchParams.get('page') || '1', 10);
 
-    const result = await AnimeScraper.getLatestAnime(Math.min(limit, 50), page);
+  const result = await LatestAnimeScraper.getLatestAnime(Math.min(limit, 50), page);
     
     // Handle backward compatibility for cached data
     let data: any[];

@@ -3,6 +3,7 @@ import { Anime, Genre } from '@/types/anime';
 import axiosInstance from '../axios';
 import { cacheManager } from '../cache';
 import { SITE_CONFIG } from '../config';
+import puppeteer, { Browser, Page } from 'puppeteer';
 
 // Helper function to scrape featured
 const scrapeFeatured = ($: any): Anime[] => {
@@ -99,6 +100,97 @@ const scrapeAiring = ($: any): Anime[] => {
 
 export class HomeScraper {
   /**
+   * Puppeteer-based scraping method for home page
+   */
+  private static async scrapeHomeWithPuppeteer(): Promise<string> {
+    let browser: Browser | null = null;
+    let page: Page | null = null;
+
+    try {
+      console.log(`Launching Puppeteer browser for home page`);
+
+      // Launch browser with stealth options
+      browser = await puppeteer.launch({
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--disable-gpu',
+          '--disable-web-security',
+          '--disable-features=VizDisplayCompositor',
+          '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36'
+        ]
+      });
+
+      page = await browser.newPage();
+
+      // Set realistic viewport
+      await page.setViewport({ width: 1366, height: 768 });
+
+      // Set user agent
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36');
+
+      // Set extra HTTP headers
+      await page.setExtraHTTPHeaders({
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept-Language': 'en-US,en;q=0.9,id;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+      });
+
+      const homeUrl = `${SITE_CONFIG.BASE_URL}/`;
+      console.log(`Navigating to home URL: ${homeUrl}`);
+
+      // Navigate to the home page
+      await page.goto(homeUrl, {
+        waitUntil: 'networkidle2',
+        timeout: 30000
+      });
+
+      // Wait a bit for dynamic content
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      // Scroll down to load more content
+      await page.evaluate(() => {
+        window.scrollTo(0, document.body.scrollHeight / 2);
+      });
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Get the page content
+      const content = await page.content();
+      console.log(`Home page content retrieved, length:`, content.length);
+
+      return content;
+
+    } catch (error) {
+      console.error(`Puppeteer home page scraping failed:`, error);
+      throw error;
+    } finally {
+      // Clean up browser
+      if (page) {
+        try {
+          await page.close();
+        } catch (e) {
+          console.error('Error closing page:', e);
+        }
+      }
+      if (browser) {
+        try {
+          await browser.close();
+        } catch (e) {
+          console.error('Error closing browser:', e);
+        }
+      }
+    }
+  }
+
+  /**
    * Scrape Home Page
    */
   static async getHome() {
@@ -106,7 +198,9 @@ export class HomeScraper {
 
     return cacheManager.getOrSet(cacheKey, async () => {
       try {
-        const { data } = await axiosInstance.get('/');
+        // Try Puppeteer first for better anti-detection and Cloudflare bypass
+        console.log(`Attempting to scrape home page with Puppeteer`);
+        const data = await this.scrapeHomeWithPuppeteer();
         const $ = load(data);
 
         return {
@@ -115,8 +209,24 @@ export class HomeScraper {
           latest: scrapeLatest($),
           airing: scrapeAiring($),
         };
-      } catch (error) {
-        throw new Error(`Failed to scrape home page: ${error}`);
+      } catch (puppeteerError) {
+        console.error('Puppeteer home scraping failed, falling back to axios:', puppeteerError);
+
+        try {
+          // Fallback to axios
+          const { data } = await axiosInstance.get('/');
+          const $ = load(data);
+
+          return {
+            featured: scrapeFeatured($),
+            popular: scrapePopular($),
+            latest: scrapeLatest($),
+            airing: scrapeAiring($),
+          };
+        } catch (axiosError) {
+          console.error('Axios home scraping also failed:', axiosError);
+          throw new Error(`Failed to scrape home page: ${axiosError}`);
+        }
       }
     });
   }

@@ -1,5 +1,5 @@
 import { NextResponse, NextRequest } from 'next/server';
-import AnimeScraper from '@/lib/scraper';
+import { EpisodeScraper } from '@/lib/scrapers';
 import { ApiResponse } from '@/types/anime';
 
 export async function GET(request: NextRequest) {
@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
       }, { status: 400 });
     }
 
-    const servers = await AnimeScraper.getEpisodeLinks(episodeId);
+  const servers = await EpisodeScraper.getEpisodeLinks(episodeId);
     
     const response: ApiResponse<any> = {
       success: true,

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import AnimeScraper from '@/lib/scraper';
+import { AnimeDetailScraper } from '@/lib/scrapers';
 import { ApiResponse } from '@/types/anime';
 
 export async function GET(
@@ -7,7 +7,8 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const data = await AnimeScraper.getAnimeDetail(params.id);
+    console.log(`API Route called for anime ID: ${params.id}`);
+    const data = await AnimeDetailScraper.getAnimeDetail(params.id);
     
     const response: ApiResponse<any> = {
       success: true,

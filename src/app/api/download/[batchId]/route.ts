@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import AnimeScraper from '@/lib/scraper';
+import { BatchScraper } from '@/lib/scrapers';
 import { ApiResponse } from '@/types/anime';
 
 export async function GET(
@@ -7,7 +7,7 @@ export async function GET(
   { params }: { params: { batchId: string } }
 ) {
   try {
-    const batchData = await AnimeScraper.getBatchDownload(params.batchId);
+  const batchData = await BatchScraper.getBatchDownload(params.batchId);
     
     const response: ApiResponse<any> = {
       success: true,

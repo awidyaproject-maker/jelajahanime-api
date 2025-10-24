@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
-import AnimeScraper from '@/lib/scraper';
+import { HomeScraper } from '@/lib/scrapers';
 import { ApiResponse } from '@/types/anime';
 
 export async function GET() {
   try {
-    const data = await AnimeScraper.getGenres();
+  const data = await HomeScraper.getGenres();
     
     const response: ApiResponse<any> = {
       success: true,

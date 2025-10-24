@@ -1,14 +1,18 @@
 import { NextResponse, NextRequest } from 'next/server';
-import AnimeScraper from '@/lib/scraper';
+import { CompletedScraper } from '@/lib/scrapers';
 import { ApiResponse } from '@/types/anime';
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const page = parseInt(searchParams.get('page') || '1', 10);
-    const limit = parseInt(searchParams.get('limit') || '20', 10);
+    const limit = parseInt(searchParams.get('limit') || '50', 10);
 
-    const data = await AnimeScraper.getCompletedAnime(page, Math.min(limit, 50));
+    const data = await CompletedScraper.getCompletedAnime(page, Math.min(limit, 50));
+
+    // Apply limit to the scraped data
+    const limitedData = data.data.slice(0, Math.min(limit, 50));
+    data.data = limitedData;
     
     const response: ApiResponse<any> = {
       success: true,

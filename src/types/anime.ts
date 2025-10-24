@@ -18,6 +18,12 @@ export interface AnimeDetail extends Anime {
   producers: string[];
   source: string;
   episodesList: Episode[];
+  japanese?: string;
+  english?: string;
+  type?: string;
+  duration?: string;
+  season?: string;
+  synonyms?: string;
 }
 
 export interface Episode {

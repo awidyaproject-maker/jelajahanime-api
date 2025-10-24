@@ -1,5 +1,5 @@
 import { NextResponse, NextRequest } from 'next/server';
-import AnimeScraper from '@/lib/scraper';
+import { GenreScraper } from '@/lib/scrapers';
 import { ApiResponse } from '@/types/anime';
 
 export async function GET(
@@ -11,7 +11,7 @@ export async function GET(
     const page = parseInt(searchParams.get('page') || '1', 10);
     const limit = parseInt(searchParams.get('limit') || '20', 10);
 
-    const data = await AnimeScraper.getAnimeByGenre(params.slug, page, Math.min(limit, 50));
+  const data = await GenreScraper.getAnimeByGenre(params.slug, page, Math.min(limit, 50));
     
     const response: ApiResponse<any> = {
       success: true,

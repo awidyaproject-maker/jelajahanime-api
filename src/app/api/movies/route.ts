@@ -1,5 +1,5 @@
 import { NextResponse, NextRequest } from 'next/server';
-import AnimeScraper from '@/lib/scraper';
+import { MovieScraper } from '@/lib/scrapers';
 import { ApiResponse } from '@/types/anime';
 
 export async function GET(request: NextRequest) {
@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
 
     console.log('Movies API called with page:', page, 'limit:', limit);
 
-    const data = await AnimeScraper.getMovies(page, Math.min(limit, 50));
+  const data = await MovieScraper.getMovies(page, Math.min(limit, 50));
 
     console.log('Movies data returned:', data);
 
