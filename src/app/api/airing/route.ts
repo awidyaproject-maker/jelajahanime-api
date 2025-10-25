@@ -2,6 +2,8 @@ import { NextResponse, NextRequest } from 'next/server';
 import { AiringScraper } from '@/lib/scrapers';
 import { ApiResponse } from '@/types/anime';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);

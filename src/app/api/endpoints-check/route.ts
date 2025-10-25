@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { load } from 'cheerio';
 import axiosInstance from '@/lib/axios';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
     const endpoints = [

@@ -97,8 +97,8 @@ export class AiringScraper {
       });
 
       const airingUrl = pageNum === 1 
-        ? `${SITE_CONFIG.BASE_URL}/daftar-anime-2/?title=&status=Currently+Airing&type=&order=update`
-        : `${SITE_CONFIG.BASE_URL}/daftar-anime-2/page/${pageNum}/?title=&status=Currently+Airing&type=&order=update`;
+        ? `${SITE_CONFIG.BASE_URL}/daftar-anime-2/?title&status=Currently+Airing&type&order=update`
+        : `${SITE_CONFIG.BASE_URL}/daftar-anime-2/page/${pageNum}/?title&status=Currently+Airing&type&order=update`;
       console.log(`Navigating to airing anime URL: ${airingUrl}`);
 
       // Navigate to the airing anime page
@@ -113,6 +113,12 @@ export class AiringScraper {
       // Scroll down to load more content
       await page.evaluate(() => {
         window.scrollTo(0, document.body.scrollHeight / 2);
+      });
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Scroll to bottom to ensure all content is loaded
+      await page.evaluate(() => {
+        window.scrollTo(0, document.body.scrollHeight);
       });
       await new Promise(resolve => setTimeout(resolve, 2000));
 

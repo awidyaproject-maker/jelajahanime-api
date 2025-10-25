@@ -7,6 +7,66 @@ import puppeteer, { Browser, Page } from 'puppeteer';
 
 export class AnimeDetailScraper {
   /**
+   * Validate if a date string represents a valid date
+   */
+  private static isValidDate(dateStr: string): boolean {
+    // Check for format like "18 October 2025"
+    const dateMatch = dateStr.match(/^(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})$/i);
+    if (dateMatch) {
+      const day = parseInt(dateMatch[1]);
+      const month = dateMatch[2].toLowerCase();
+      const year = parseInt(dateMatch[3]);
+      
+      // Basic validation
+      if (day < 1 || day > 31 || year < 1900 || year > 2100) {
+        return false;
+      }
+      
+      // Month-specific day validation
+      const monthDays = {
+        january: 31, february: 29, march: 31, april: 30, may: 31, june: 30,
+        july: 31, august: 31, september: 30, october: 31, november: 30, december: 31
+      };
+      
+      const maxDays = monthDays[month as keyof typeof monthDays] || 31;
+      return day <= maxDays;
+    }
+    
+    // Check for YYYY-MM-DD format
+    const isoMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (isoMatch) {
+      const year = parseInt(isoMatch[1]);
+      const month = parseInt(isoMatch[2]);
+      const day = parseInt(isoMatch[3]);
+      
+      if (month < 1 || month > 12 || day < 1 || day > 31 || year < 1900 || year > 2100) {
+        return false;
+      }
+      
+      // Month-specific validation
+      const monthDays = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+      return day <= monthDays[month - 1];
+    }
+    
+    // Check for MM/DD/YYYY format
+    const usMatch = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (usMatch) {
+      const month = parseInt(usMatch[1]);
+      const day = parseInt(usMatch[2]);
+      const year = parseInt(usMatch[3]);
+      
+      if (month < 1 || month > 12 || day < 1 || day > 31 || year < 1900 || year > 2100) {
+        return false;
+      }
+      
+      const monthDays = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+      return day <= monthDays[month - 1];
+    }
+    
+    return false;
+  }
+
+  /**
    * Puppeteer-based scraping method for anime details
    */
   private static async scrapeWithPuppeteer(animeId: string): Promise<AnimeDetail> {
@@ -155,30 +215,45 @@ export class AnimeDetailScraper {
         }
       }
 
-      // Try to extract rating - look for specific patterns like "6.55 / 2571"
+      // Try to extract rating - prioritize vote patterns like "7.20 / 3,933"
       let rating: number | undefined;
-      const ratingSelectors = ['.rating', '.score', '.imdb-rating', '.rating-value', '.anime-rating', '.star-rating'];
-      for (const selector of ratingSelectors) {
-        const text = $(selector).first().text().trim();
-        const numRating = parseFloat(text.replace(/[^\d.]/g, ''));
-        require('fs').appendFileSync('d:\\debug.log', `Rating selector "${selector}" found text: "${text}", parsed rating: ${numRating}\n`);
-        if (!isNaN(numRating) && numRating > 0 && numRating <= 10) {
-          rating = numRating;
-          require('fs').appendFileSync('d:\\debug.log', `Set rating to ${rating} from selector ${selector}\n`);
-          break;
+      
+      // First, try to extract from vote patterns (prioritize these as they are the main ratings)
+      const bodyText = $('body').text();
+      const votePatterns = [
+        /(\d+\.?\d*)\s*\/\s*[\d,]+/g,  // "7.20 / 3,933" or "7.20 / 2571"
+      ];
+      
+      for (const pattern of votePatterns) {
+        const matches = bodyText.match(pattern);
+        if (matches) {
+          for (const match of matches) {
+            const ratingMatch = match.match(/(\d+\.?\d*)/);
+            if (ratingMatch) {
+              const numRating = parseFloat(ratingMatch[1]);
+              if (!isNaN(numRating) && numRating > 0 && numRating <= 10) {
+                // Take the first valid rating found with user count
+                rating = numRating;
+                require('fs').appendFileSync('d:\\debug.log', `Set rating to ${rating} from vote pattern: "${match}"\n`);
+                break;
+              }
+            }
+          }
+          if (rating) break;
         }
       }
 
-      // If still no rating, try to extract from text content with patterns like "6.55 / 2571"
+      // If no rating from vote patterns, try other selectors
       if (!rating) {
-        const bodyText = $('body').text();
-        const ratingMatch = bodyText.match(/(\d+\.?\d*)\s*\/\s*\d+/);
-        require('fs').appendFileSync('d:\\debug.log', `Body text rating pattern match: ${ratingMatch ? ratingMatch[0] : 'null'}\n`);
-        if (ratingMatch) {
-          const numRating = parseFloat(ratingMatch[1]);
+        const ratingSelectors = ['.rating', '.score', '.imdb-rating', '.rating-value', '.anime-rating', '.star-rating'];
+        for (const selector of ratingSelectors) {
+          const text = $(selector).first().text().trim();
+          const numRating = parseFloat(text.replace(/[^\d.]/g, ''));
+          require('fs').appendFileSync('d:\\debug.log', `Rating selector "${selector}" found text: "${text}", parsed rating: ${numRating}\n`);
           if (!isNaN(numRating) && numRating > 0 && numRating <= 10) {
             rating = numRating;
-            require('fs').appendFileSync('d:\\debug.log', `Set rating to ${rating} from body text pattern\n`);
+            require('fs').appendFileSync('d:\\debug.log', `Set rating to ${rating} from selector ${selector}\n`);
+            break;
           }
         }
       }
@@ -188,9 +263,9 @@ export class AnimeDetailScraper {
         const bodyText = $('body').text();
         // Look for patterns like "6.55" followed by "/" and numbers
         const patterns = [
-          /(\d+\.?\d*)\s*\/\s*\d+/g,  // "6.55 / 2571"
           /rating[:\s]*(\d+\.?\d*)/gi, // "rating: 6.55"
           /score[:\s]*(\d+\.?\d*)/gi,  // "score: 6.55"
+          /(\d+\.?\d*)\s*\/\s*\d+/g,  // "6.55 / 2571"
           /(\d+\.?\d*)\s*\(\s*\d+/g,   // "6.55 (2571"
         ];
 
@@ -393,6 +468,11 @@ export class AnimeDetailScraper {
             value.split(',').forEach(part => {
               const trimmed = part.trim();
               if (trimmed && trimmed !== 'N/A' && trimmed !== 'Unknown' && trimmed !== '-' && trimmed.length > 1) {
+                // Skip strings that look like dates or release information
+                const isDateLike = /(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}|\d{4}-\d{2}-\d{2}|\d{2}\/\d{2}\/\d{4}|\d{1,2}\/\d{1,2}\/\d{4}|Released|released|to \?)/.test(trimmed);
+                if (isDateLike) {
+                  return; // Skip this part, it's not a producer name
+                }
                 // Check if it's a link format [Name](url)
                 const linkMatch = trimmed.match(/\[([^\]]+)\]\([^)]+\)/);
                 if (linkMatch) {
@@ -576,7 +656,6 @@ export class AnimeDetailScraper {
       }
 
       // Additional producer extraction from specific patterns in the page
-      const bodyText = $('body').text();
       if (producers.length === 0) {
         // Look for "Producers[Bushiroad Move](url), [DAX Production](url)" pattern
         const producerPattern = /Producers(\[([^\]]+)\]\([^)]+\)(?:,\s*\[([^\]]+)\]\([^)]+\))*)/;
@@ -651,7 +730,11 @@ export class AnimeDetailScraper {
               // Extract producer names from the text
               const producerNames = text.match(/(?:Producers|Producer)[\s:]*([^\n\r]*)/);
               if (producerNames && producerNames[1]) {
-                const names = producerNames[1].split(',').map(name => name.trim()).filter(name => name && name !== 'N/A');
+                const names = producerNames[1].split(',').map(name => name.trim()).filter(name => {
+                  // Skip strings that look like dates or release information
+                  const isDateLike = /(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}|\d{4}-\d{2}-\d{2}|\d{2}\/\d{2}\/\d{4}|\d{1,2}\/\d{1,2}\/\d{4}|Released|released|to \?)/.test(name);
+                  return name && name !== 'N/A' && !isDateLike;
+                });
                 producers.push(...names);
               }
             }
@@ -690,7 +773,9 @@ export class AnimeDetailScraper {
           /(\d+)\s*episode/gi,            // "12 episode"
           /(\d+)\s*eps/gi,                // "12 eps"
           /episode\s*:\s*(\d+)/gi,        // "Episode: 12"
-          /eps?\s*:\s*(\d+)/gi           // "Eps: 12"
+          /eps?\s*:\s*(\d+)/gi,           // "Eps: 12"
+          /episodes?\s*total[:\s]*(\d+)/gi, // "Episodes Total: 12"
+          /(\d+)\s*\/\s*\d+\s*episodes/gi, // "12 / 12 episodes"
         ];
 
         for (const pattern of epPatterns) {
@@ -699,6 +784,7 @@ export class AnimeDetailScraper {
             const count = parseInt(match[1]);
             if (!isNaN(count) && count > 0 && count < 1000) {
               episodes = count;
+              require('fs').appendFileSync('d:\\debug.log', `Puppeteer set episodes to ${episodes} from pattern: ${pattern}\n`);
               break;
             }
           }
@@ -710,6 +796,7 @@ export class AnimeDetailScraper {
           const count = parseInt(text.replace(/\D/g, ''));
           if (!isNaN(count) && count > 0 && count < 1000) {
             episodes = count;
+            require('fs').appendFileSync('d:\\debug.log', `Puppeteer set episodes to ${episodes} from selector: ${selector}\n`);
             break;
           }
         }
@@ -782,6 +869,9 @@ export class AnimeDetailScraper {
         '.list-episode a'
       ];
 
+      // First, collect all episode links with their positions
+      const episodeElements: Array<{element: any, episodeNum: number, href: string, text: string}> = [];
+
       $(episodeSelectors.join(', ')).each((_, el) => {
         const $el = $(el);
         const href = $el.attr('href');
@@ -795,80 +885,193 @@ export class AnimeDetailScraper {
           const epMatch = href.match(/-episode-(\d+)/);
           const episodeNum = epMatch ? parseInt(epMatch[1]) : null;
 
-          if (episodeNum && !episodesList.find(ep => ep.episode === episodeNum)) {
-            let title = `Episode ${episodeNum}`;
-            if (epText && epText !== episodeNum.toString() && epText.length > 2) {
-              title = epText;
-            }
-
-            // Try to extract date from nearby elements
-            let date = '';
-            const $parent = $el.parent();
-            
-            // Look for date in sibling elements or nearby text
-            const dateSelectors = [
-              $parent.next(),
-              $parent.nextAll().first(),
-              $parent.find('+ *'),
-              $parent.parent().find('.date, .release-date, .air-date')
-            ];
-            
-            for (const $dateEl of dateSelectors) {
-              if ($dateEl.length > 0) {
-                const dateText = $dateEl.text().trim();
-                // Look for date patterns like "18 October 2025", "2025-10-18", etc.
-                const datePatterns = [
-                  /(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})/i,
-                  /(\d{4}-\d{2}-\d{2})/,
-                  /(\d{2}\/\d{2}\/\d{4})/,
-                  /(\d{1,2}\/\d{1,2}\/\d{4})/
-                ];
-                
-                for (const pattern of datePatterns) {
-                  const match = dateText.match(pattern);
-                  if (match && match[1]) {
-                    date = match[1];
-                    break;
-                  }
-                }
-                if (date) break;
-              }
-            }
-            
-            // If no date found in nearby elements, look in the broader context
-            if (!date) {
-              const $container = $el.closest('li, .episode-item, .ep-item');
-              if ($container.length > 0) {
-                const containerText = $container.text();
-                const datePatterns = [
-                  /(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})/i,
-                  /(\d{4}-\d{2}-\d{2})/,
-                  /(\d{2}\/\d{2}\/\d{4})/,
-                  /(\d{1,2}\/\d{1,2}\/\d{4})/
-                ];
-                
-                for (const pattern of datePatterns) {
-                  const match = containerText.match(pattern);
-                  if (match && match[1]) {
-                    date = match[1];
-                    break;
-                  }
-                }
-              }
-            }
-
-            episodesList.push({
-              episode: episodeNum,
-              title: title,
-              url: href,
-              date: date,
+          if (episodeNum && !episodeElements.find(ep => ep.episodeNum === episodeNum)) {
+            episodeElements.push({
+              element: $el,
+              episodeNum,
+              href,
+              text: epText
             });
           }
         }
       });
 
+      // Sort episode elements by episode number
+      episodeElements.sort((a, b) => a.episodeNum - b.episodeNum);
+
+      // Now try to extract dates for each episode
+      for (const epElement of episodeElements) {
+        const { element: $el, episodeNum, href, text: epText } = epElement;
+
+        let title = `Episode ${episodeNum}`;
+        if (epText && epText !== episodeNum.toString() && epText.length > 2) {
+          title = epText;
+        }
+
+        let date = '';
+
+        // Method 1: Look for dates in table structure (common pattern)
+        const $row = $el.closest('tr, .row, .episode-row');
+        if ($row.length > 0) {
+          // Look for date in other cells of the same row
+          $row.find('td, .cell, .date-cell').each((index: number, cell: any) => {
+            const $cell = $(cell);
+            if (!$cell.find('a[href*="-episode-"], a[href*="/episode/"]').length) { // Avoid cells with episode links
+              const cellText = $cell.text().trim();
+              const datePatterns = [
+                /(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})/i,
+                /(\d{4}-\d{2}-\d{2})/,
+                /(\d{2}\/\d{2}\/\d{4})/,
+                /(\d{1,2}\/\d{1,2}\/\d{4})/,
+                /(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4})/i,
+                /(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{2})/i, // Short year
+                /(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{2})/i // Short year abbreviated
+              ];
+
+              for (const pattern of datePatterns) {
+                const match = cellText.match(pattern);
+                if (match && match[1]) {
+                  date = match[1];
+                  break;
+                }
+              }
+              if (date) return false; // break out of each loop
+            }
+          });
+        }
+
+        // Method 2: Look for dates in nearby elements (original logic)
+        if (!date) {
+          const $parent = $el.parent();
+          const $container = $el.closest('li, .episode-item, .ep-item');
+
+          const dateSelectors = [
+            $parent.next(),
+            $parent.nextAll().first(),
+            $parent.find('+ *'),
+            $parent.find('.date, .release-date, .air-date'),
+            $container.find('.date, .release-date, .air-date'),
+            $container.next(),
+            $container.nextAll().first()
+          ];
+
+          for (const $dateEl of dateSelectors) {
+            if ($dateEl.length > 0) {
+              const dateText = $dateEl.text().trim();
+              const datePatterns = [
+                /(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})/i,
+                /(\d{4}-\d{2}-\d{2})/,
+                /(\d{2}\/\d{2}\/\d{4})/,
+                /(\d{1,2}\/\d{1,2}\/\d{4})/,
+                /(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4})/i,
+                /(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{2})/i,
+                /(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{2})/i
+              ];
+
+              for (const pattern of datePatterns) {
+                const match = dateText.match(pattern);
+                if (match && match[1]) {
+                  date = match[1];
+                  break;
+                }
+              }
+              if (date) break;
+            }
+          }
+        }
+
+        // Method 3: Look in the broader container context
+        if (!date) {
+          const $container = $el.closest('li, .episode-item, .ep-item');
+          if ($container.length > 0) {
+            const containerText = $container.text();
+            const datePatterns = [
+              /(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})/i,
+              /(\d{4}-\d{2}-\d{2})/,
+              /(\d{2}\/\d{2}\/\d{4})/,
+              /(\d{1,2}\/\d{1,2}\/\d{4})/,
+              /(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4})/i,
+              /(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{2})/i,
+              /(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{2})/i
+            ];
+
+            for (const pattern of datePatterns) {
+              const match = containerText.match(pattern);
+              if (match && match[1]) {
+                date = match[1];
+                break;
+              }
+            }
+          }
+        }
+
+        // Method 4: Look for dates in the entire episode list area and try to associate by position
+        if (!date) {
+          const $episodeList = $el.closest('.episode-list, .episodes-list, .list-episode, ul, ol, table, tbody');
+          if ($episodeList.length > 0) {
+            // Get all date-like strings from the episode list
+            const listText = $episodeList.text();
+            const dateMatches = listText.match(/(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}|\d{4}-\d{2}-\d{2}|\d{2}\/\d{2}\/\d{4}|\d{1,2}\/\d{1,2}\/\d{4}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}|\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{2}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{2})/gi);
+
+            if (dateMatches && dateMatches.length > 0) {
+              // Try to find a date that might correspond to this episode
+              // For now, just use the first available date (this is a fallback)
+              date = dateMatches[0];
+            }
+          }
+        }
+
+        // Method 5: Look for dates in elements that might be positioned after episode links
+        if (!date) {
+          // Look for any element that contains dates and is near episode links
+          $('*').each((_, el) => {
+            const $el2 = $(el);
+            const text = $el2.text().trim();
+            if (text && text !== epText && !text.includes('Episode') && !text.includes('episode')) {
+              const datePatterns = [
+                /(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})/i,
+                /(\d{4}-\d{2}-\d{2})/,
+                /(\d{2}\/\d{2}\/\d{4})/,
+                /(\d{1,2}\/\d{1,2}\/\d{4})/,
+                /(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4})/i,
+                /(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{2})/i,
+                /(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{2})/i
+              ];
+
+              for (const pattern of datePatterns) {
+                const match = text.match(pattern);
+                if (match && match[1] && text.length < 50) { // Avoid long text blocks
+                  date = match[1];
+                  return false; // break out of each loop
+                }
+              }
+            }
+          });
+        }
+
+        episodesList.push({
+          episode: episodeNum,
+          title: title,
+          url: href,
+          date: date,
+        });
+      }
+
       // Sort episodes
       episodesList.sort((a, b) => a.episode - b.episode);
+
+      // Calculate current airing episode (highest episode number)
+      const currentEpisode = episodesList.length > 0 ? Math.max(...episodesList.map(ep => ep.episode)) : 0;
+
+      // Set totalEpisode more aggressively - if we found episodes count, use it as totalEpisode
+      // This handles cases where anime are completed and have total episode information
+      let totalEpisode: number | undefined;
+      if (episodes > 0) {
+        totalEpisode = episodes;
+        require('fs').appendFileSync('d:\\debug.log', `Set totalEpisode to ${totalEpisode} (status: ${status}, episodes found: ${episodes})\n`);
+      } else {
+        totalEpisode = undefined;
+      }
 
       // Try to extract aired date, duration, and synonyms from various patterns in the page
       const puppeteerBodyText = $('body').text();
@@ -949,7 +1152,8 @@ export class AnimeDetailScraper {
         genres: genres.slice(0, 10),
         studios: studios.slice(0, 5),
         producers: producers.slice(0, 5),
-        episodes,
+        episode: currentEpisode,
+        totalEpisode: totalEpisode,
         aired,
         source,
         episodesList: episodesList.reverse().slice(0, 50),
@@ -988,7 +1192,7 @@ export class AnimeDetailScraper {
    * Get Anime Detail
    */
   static async getAnimeDetail(animeId: string): Promise<AnimeDetail> {
-    const cacheKey = `anime:detail:${animeId}:v10`;
+    const cacheKey = `anime:detail:${animeId}:v13`;
 
     const cached = cacheManager.get(cacheKey);
     if (cached) {
@@ -1102,13 +1306,27 @@ export class AnimeDetailScraper {
           // If still no rating, try to extract from text content with patterns like "6.55 / 2571"
           if (!rating) {
             const bodyText = $('body').text();
-            const ratingMatch = bodyText.match(/(\d+\.?\d*)\s*\/\s*\d+/);
-            require('fs').appendFileSync('d:\\debug.log', `Axios body text rating pattern match: ${ratingMatch ? ratingMatch[0] : 'null'}\n`);
-            if (ratingMatch) {
-              const numRating = parseFloat(ratingMatch[1]);
-              if (!isNaN(numRating) && numRating > 0 && numRating <= 10) {
-                rating = numRating;
-                require('fs').appendFileSync('d:\\debug.log', `Axios set rating to ${rating} from body text pattern\n`);
+            // Look for rating patterns with user counts (prioritize these as they seem to be the main ratings)
+            const votePatterns = [
+              /(\d+\.?\d*)\s*\/\s*[\d,]+/g,  // "7.20 / 3,933" or "7.20 / 2571"
+            ];
+            
+            for (const pattern of votePatterns) {
+              const matches = bodyText.match(pattern);
+              if (matches) {
+                for (const match of matches) {
+                  const ratingMatch = match.match(/(\d+\.?\d*)/);
+                  if (ratingMatch) {
+                    const numRating = parseFloat(ratingMatch[1]);
+                    if (!isNaN(numRating) && numRating > 0 && numRating <= 10) {
+                      // Take the first valid rating found with user count
+                      rating = numRating;
+                      require('fs').appendFileSync('d:\\debug.log', `Axios set rating to ${rating} from vote pattern: "${match}"\n`);
+                      break;
+                    }
+                  }
+                }
+                if (rating) break;
               }
             }
           }
@@ -1287,6 +1505,11 @@ export class AnimeDetailScraper {
               value.split(',').forEach(part => {
                 const trimmed = part.trim();
                 if (trimmed && trimmed !== 'N/A' && trimmed !== 'Unknown' && trimmed !== '-' && trimmed.length > 1) {
+                  // Skip strings that look like dates or release information
+                  const isDateLike = /(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}|\d{4}-\d{2}-\d{2}|\d{2}\/\d{2}\/\d{4}|\d{1,2}\/\d{1,2}\/\d{4}|Released|released|to \?)/.test(trimmed);
+                  if (isDateLike) {
+                    return; // Skip this part, it's not a producer name
+                  }
                   // Check if it's a link format [Name](url)
                   const linkMatch = trimmed.match(/\[([^\]]+)\]\([^)]+\)/);
                   if (linkMatch) {
@@ -1403,6 +1626,11 @@ export class AnimeDetailScraper {
                 value.split(',').forEach(part => {
                   const trimmed = part.trim();
                   if (trimmed && trimmed !== 'N/A' && trimmed !== 'Unknown' && trimmed !== '-' && trimmed.length > 1) {
+                    // Skip strings that look like dates or release information
+                    const isDateLike = /(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}|\d{4}-\d{2}-\d{2}|\d{2}\/\d{2}\/\d{4}|\d{1,2}\/\d{1,2}\/\d{4}|Released|released|to \?)/.test(trimmed);
+                    if (isDateLike) {
+                      return; // Skip this part, it's not a producer name
+                    }
                     // Check if it's a link format [Name](url)
                     const linkMatch = trimmed.match(/\[([^\]]+)\]\([^)]+\)/);
                     if (linkMatch) {
@@ -1539,7 +1767,11 @@ export class AnimeDetailScraper {
                   // Extract producer names from the text
                   const producerNames = text.match(/(?:Producers|Producer)[\s:]*([^\n\r]*)/);
                   if (producerNames && producerNames[1]) {
-                    const names = producerNames[1].split(',').map(name => name.trim()).filter(name => name && name !== 'N/A');
+                    const names = producerNames[1].split(',').map(name => name.trim()).filter(name => {
+                      // Skip strings that look like dates or release information
+                      const isDateLike = /(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}|\d{4}-\d{2}-\d{2}|\d{2}\/\d{2}\/\d{4}|\d{1,2}\/\d{1,2}\/\d{4}|Released|released|to \?)/.test(name);
+                      return name && name !== 'N/A' && !isDateLike;
+                    });
                     producers.push(...names);
                   }
                 }
@@ -1585,7 +1817,9 @@ export class AnimeDetailScraper {
               /(\d+)\s*episode/gi,            // "12 episode"
               /(\d+)\s*eps/gi,                // "12 eps"
               /episode\s*:\s*(\d+)/gi,        // "Episode: 12"
-              /eps?\s*:\s*(\d+)/gi           // "Eps: 12"
+              /eps?\s*:\s*(\d+)/gi,           // "Eps: 12"
+              /episodes?\s*total[:\s]*(\d+)/gi, // "Episodes Total: 12"
+              /(\d+)\s*\/\s*\d+\s*episodes/gi, // "12 / 12 episodes"
             ];
 
             for (const pattern of epPatterns) {
@@ -1748,8 +1982,18 @@ export class AnimeDetailScraper {
             }
           });
 
-          // Sort episodes by number
-          episodesList.sort((a, b) => a.episode - b.episode);
+          // Calculate current airing episode (highest episode number)
+          const currentEpisode = episodesList.length > 0 ? Math.max(...episodesList.map(ep => ep.episode)) : 0;
+
+          // Set totalEpisode more aggressively - if we found episodes count, use it as totalEpisode
+          // This handles cases where anime are completed and have total episode information
+          let totalEpisode: number | undefined;
+          if (episodes > 0) {
+            totalEpisode = episodes;
+            require('fs').appendFileSync('d:\\debug.log', `Axios set totalEpisode to ${totalEpisode} (status: ${status}, episodes found: ${episodes})\n`);
+          } else {
+            totalEpisode = undefined;
+          }
 
           return {
             id: animeId,
@@ -1763,7 +2007,8 @@ export class AnimeDetailScraper {
             genres: genres.slice(0, 10), // Limit to 10 genres
             studios: studios.slice(0, 5), // Limit to 5 studios
             producers: producers.slice(0, 5), // Limit to 5 producers
-            episodes,
+            episode: currentEpisode,
+            totalEpisode: totalEpisode,
             aired,
             source,
             episodesList: episodesList.reverse().slice(0, 50), // Limit to 50 episodes
@@ -1791,7 +2036,8 @@ export class AnimeDetailScraper {
             genres: [],
             studios: [],
             producers: [],
-            episodes: 0,
+            episode: 0,
+            totalEpisode: undefined,
             aired: '',
             source: '',
             episodesList: [],

@@ -18,6 +18,8 @@ export interface AnimeDetail extends Anime {
   producers: string[];
   source: string;
   episodesList: Episode[];
+  episode?: number; // Current airing episode count
+  totalEpisode?: number; // Total episodes from site
   japanese?: string;
   english?: string;
   type?: string;

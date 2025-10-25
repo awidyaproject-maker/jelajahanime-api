@@ -12,24 +12,74 @@ export const scrapeAnimeItems = ($: any, container?: string): any[] => {
     $items = $('article.animpost, div.animepost');
   }
 
-  $items.each((_: any, el: any) => {
-    const $el = $(el);
-    const $link = $el.find('a').first();
-    const href = $link.attr('href');
-    const $img = $link.find('img');
+  console.log(`Found ${$items.length} thumb/article elements`);
 
-    if (href) {
-      items.push({
-        id: href.split('/').filter(Boolean).pop() || '',
-        title: $img.attr('title') || $img.attr('alt') || '',
-        image: $img.attr('src') || '',
-        synopsis: '',
-        status: 'ongoing',
-        url: href,
-      });
-    }
-  });
+  // If still no items, try to find anime links in text content (for daftar-anime-2 pages)
+  if ($items.length === 0) {
+    const $links = $('a[href*="/anime/"]');
+    console.log(`Found ${$links.length} anime links`);
 
+    $links.each((_: any, el: any) => {
+      const $el = $(el);
+      const href = $el.attr('href');
+      const text = $el.text().trim();
+
+      if (href && text && href.includes('/anime/') && !href.includes('#') && text.length > 2) {
+        // Extract title from link text, assuming format like "[Title TV  rating Title Status]"
+        let title = text;
+        
+        // Remove brackets if present
+        if (title.startsWith('[') && title.endsWith(']')) {
+          title = title.slice(1, -1);
+        }
+        
+        // Split by status and take the first part
+        const statusMatch = title.match(/\s+(Ongoing|Completed)$/i);
+        if (statusMatch) {
+          title = title.substring(0, statusMatch.index);
+        }
+        
+        // The title appears twice: "Title Type  rating Title"
+        // Take the part before the rating
+        const ratingMatch = title.match(/\s*[\d.]+\s*/);
+        if (ratingMatch) {
+          title = title.substring(0, ratingMatch.index).trim();
+        }
+        
+        // Remove type indicators
+        title = title.replace(/\s+(TV|OVA|ONA|Special|Movie)$/i, '').trim();
+
+        items.push({
+          id: href.split('/').filter(Boolean).pop() || '',
+          title: title,
+          image: '', // No image in text mode
+          synopsis: '',
+          status: 'ongoing', // Will be overridden if needed
+          url: href,
+        });
+      }
+    });
+  } else {
+    $items.each((_: any, el: any) => {
+      const $el = $(el);
+      const $link = $el.find('a').first();
+      const href = $link.attr('href');
+      const $img = $link.find('img');
+
+      if (href) {
+        items.push({
+          id: href.split('/').filter(Boolean).pop() || '',
+          title: $img.attr('title') || $img.attr('alt') || '',
+          image: $img.attr('src') || '',
+          synopsis: '',
+          status: 'ongoing',
+          url: href,
+        });
+      }
+    });
+  }
+
+  console.log(`Extracted ${items.length} anime items`);
   return items;
 };
 

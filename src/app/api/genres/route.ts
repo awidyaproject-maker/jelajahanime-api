@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { HomeScraper } from '@/lib/scrapers';
 import { ApiResponse } from '@/types/anime';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
   const data = await HomeScraper.getGenres();
