@@ -7,9 +7,9 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const limit = parseInt(searchParams.get('limit') || '20', 10);
+    const page = parseInt(searchParams.get('page') || '1', 10);
 
-  const data = await PopularScraper.getPopularAnime(Math.min(limit, 50));
+    const data = await PopularScraper.getPopularAnime(page);
     
     const response: ApiResponse<any> = {
       success: true,

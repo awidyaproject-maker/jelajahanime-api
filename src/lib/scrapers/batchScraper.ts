@@ -3,38 +3,97 @@ import { Anime } from '@/types/anime';
 import axiosInstance from '../axios';
 import { cacheManager } from '../cache';
 import { SITE_CONFIG } from '../config';
+import puppeteer, { Browser, Page } from 'puppeteer';
 
-// Helper function to scrape anime items from .thumb elements or article tags
-const scrapeAnimeItems = ($: any, container?: string): any[] => {
+// Helper function to scrape batch items from the batch page
+const scrapeBatchItems = ($: any): any[] => {
   const items: any[] = [];
 
-  // Try different selectors
-  let $items = $('div.thumb');
+  // Try multiple selectors to find all batch items on the page
+  const selectors = [
+    'div.thumb',                    // Most common
+    'article.animpost',             // Article posts
+    'div.animepost',                // Anime posts
+    '.post-item',                   // Generic post items
+    '.entry',                       // Entry containers
+    '.item',                        // Generic items
+    '[class*="batch"]',             // Any element with batch in class
+    '[class*="anime"]'              // Any element with anime in class
+  ];
 
-  // If no thumb elements found, try article tags (for search results, etc)
-  if ($items.length === 0) {
-    $items = $('article.animpost, div.animepost');
+  let foundItems = 0;
+
+  // Try each selector
+  for (const selector of selectors) {
+    const $elements = $(selector);
+    if ($elements.length > 0) {
+      console.log(`Found ${$elements.length} elements with selector: ${selector}`);
+
+      $elements.each((_: any, el: any) => {
+        const $el = $(el);
+        const $link = $el.find('a[href*="/batch/"]').first();
+
+        if ($link.length > 0) {
+          const href = $link.attr('href');
+          const $img = $link.find('img').first() || $el.find('img').first();
+
+          if (href && href.includes('/batch/')) {
+            const title = $img.attr('title') || $img.attr('alt') || $link.text().trim() || '';
+            const image = $img.attr('src') || $img.attr('data-src') || '';
+
+            if (title || image) { // Only add if we have some identifying info
+              items.push({
+                id: href.split('/').filter(Boolean).pop() || '',
+                title: title,
+                image: image,
+                synopsis: '',
+                status: 'ongoing',
+                url: href,
+              });
+              foundItems++;
+            }
+          }
+        }
+      });
+
+      // If we found items with this selector, we can break or continue to find more
+      // For now, let's collect from all selectors to be thorough
+    }
   }
 
-  $items.each((_: any, el: any) => {
-    const $el = $(el);
-    const $link = $el.find('a').first();
+  // Also try to find any links that contain /batch/ directly
+  $('a[href*="/batch/"]').each((_: any, el: any) => {
+    const $link = $(el);
     const href = $link.attr('href');
-    const $img = $link.find('img');
 
-    if (href) {
-      items.push({
-        id: href.split('/').filter(Boolean).pop() || '',
-        title: $img.attr('title') || $img.attr('alt') || '',
-        image: $img.attr('src') || '',
-        synopsis: '',
-        status: 'ongoing',
-        url: href,
-      });
+    if (href && href.includes('/batch/')) {
+      const $img = $link.find('img').first();
+      const title = $img.attr('title') || $img.attr('alt') || $link.text().trim() || '';
+      const image = $img.attr('src') || $img.attr('data-src') || '';
+
+      // Check if we already have this item
+      const existingItem = items.find(item => item.url === href);
+      if (!existingItem && (title || image)) {
+        items.push({
+          id: href.split('/').filter(Boolean).pop() || '',
+          title: title,
+          image: image,
+          synopsis: '',
+          status: 'ongoing',
+          url: href,
+        });
+        foundItems++;
+      }
     }
   });
 
-  return items;
+  // Remove duplicates based on ID
+  const uniqueItems = items.filter((item, index, self) =>
+    index === self.findIndex(i => i.id === item.id)
+  );
+
+  console.log(`Extracted ${foundItems} batch items, ${uniqueItems.length} unique`);
+  return uniqueItems;
 };
 
 export class BatchScraper {
@@ -46,33 +105,230 @@ export class BatchScraper {
 
     return cacheManager.getOrSet(cacheKey, async () => {
       try {
-        // Try specific batch URL first
-        let data;
+        // Try Puppeteer first for better success rate
+        return await this.scrapeBatchWithPuppeteer(page, limit);
+      } catch (puppeteerError) {
+        console.error('Puppeteer batch scraping failed, falling back to axios:', puppeteerError);
+
         try {
-          const response = await axiosInstance.get('/daftar-batch/');
-          data = response.data;
-        } catch (batchError) {
-          // Fallback to homepage if batch URL fails
-          console.warn('Batch URL failed, using homepage fallback:', batchError);
-          const response = await axiosInstance.get('/');
-          data = response.data;
-        }
+          // Fallback to axios
+          const batchUrl = page === 1 ? '/daftar-batch/' : `/daftar-batch/page/${page}/`;
+          const { data } = await axiosInstance.get(batchUrl);
+          const $ = load(data);
+          const batches = scrapeBatchItems($);
 
-        const $ = load(data);
-        const batches = scrapeAnimeItems($);
+          // Try to extract pagination information from the page
+          let totalPages = 50; // Default fallback
+          let totalItems = 1000; // Default fallback
 
-        return {
-          data: batches.slice(0, limit),
-          pagination: {
-            currentPage: page,
-            totalPages: 50,
-            totalItems: 1000,
+          // Look for pagination elements
+          const $pagination = $('.pagination, .wp-pagenavi, .page-numbers');
+          if ($pagination.length > 0) {
+            // Try to find the last page number
+            const pageLinks = $pagination.find('a').toArray();
+            const pageNumbers: number[] = [];
+
+            pageLinks.forEach((link) => {
+              const href = $(link).attr('href') || '';
+              const text = $(link).text().trim();
+
+              // Extract page number from URL like /daftar-batch/page/5/
+              const pageMatch = href.match(/\/daftar-batch\/page\/(\d+)\//);
+              if (pageMatch) {
+                pageNumbers.push(parseInt(pageMatch[1]));
+              }
+
+              // Also check text content for page numbers
+              const numMatch = text.match(/^\d+$/);
+              if (numMatch) {
+                pageNumbers.push(parseInt(numMatch[0]));
+              }
+            });
+
+            if (pageNumbers.length > 0) {
+              totalPages = Math.max(...pageNumbers);
+            }
           }
-        };
-      } catch (error) {
-        throw new Error(`Failed to scrape batch anime: ${error}`);
+
+          // Estimate total items based on current page results and total pages
+          if (batches.length > 0) {
+            totalItems = Math.max(totalItems, batches.length * totalPages);
+          }
+
+          return {
+            data: batches.slice(0, limit),
+            pagination: {
+              currentPage: page,
+              totalPages: totalPages,
+              totalItems: totalItems,
+            }
+          };
+        } catch (axiosError) {
+          console.error('Axios batch scraping also failed:', axiosError);
+          throw new Error(`Failed to scrape batch anime: ${axiosError}`);
+        }
       }
     });
+  }
+
+  /**
+   * Puppeteer-based scraping method for batch anime
+   */
+  private static async scrapeBatchWithPuppeteer(pageNum: number = 1, limit: number = 20): Promise<{data: any[], pagination: any}> {
+    let browser: Browser | null = null;
+    let page: Page | null = null;
+
+    try {
+      console.log(`Launching Puppeteer browser for batch anime page: ${pageNum}`);
+
+      // Launch browser with stealth options
+      browser = await puppeteer.launch({
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--disable-gpu',
+          '--disable-web-security',
+          '--disable-features=VizDisplayCompositor',
+          '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36'
+        ]
+      });
+
+      page = await browser.newPage();
+
+      // Set realistic viewport
+      await page.setViewport({ width: 1366, height: 768 });
+
+      // Set user agent
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36');
+
+      // Set extra HTTP headers
+      await page.setExtraHTTPHeaders({
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept-Language': 'en-US,en;q=0.9,id;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+      });
+
+      const batchUrl = pageNum === 1
+        ? `${SITE_CONFIG.BASE_URL}/daftar-batch/`
+        : `${SITE_CONFIG.BASE_URL}/daftar-batch/page/${pageNum}/`;
+
+      console.log(`Navigating to batch URL: ${batchUrl}`);
+
+      // Navigate to the batch page
+      await page.goto(batchUrl, {
+        waitUntil: 'networkidle2',
+        timeout: 30000
+      });
+
+      // Wait a bit for dynamic content
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      // Scroll down multiple times to load more content
+      await page.evaluate(() => {
+        window.scrollTo(0, document.body.scrollHeight / 4);
+      });
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      await page.evaluate(() => {
+        window.scrollTo(0, document.body.scrollHeight / 2);
+      });
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      await page.evaluate(() => {
+        window.scrollTo(0, document.body.scrollHeight * 3 / 4);
+      });
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      await page.evaluate(() => {
+        window.scrollTo(0, document.body.scrollHeight);
+      });
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Get the page content
+      const content = await page.content();
+      console.log('Batch page content retrieved, length:', content.length);
+
+      // Parse with Cheerio
+      const $ = load(content);
+
+      // Extract batch results
+      const batches = scrapeBatchItems($);
+
+      // Try to extract pagination information
+      let totalPages = 50; // Default fallback
+      let totalItems = 1000; // Default fallback
+
+      // Look for pagination elements
+      const $pagination = $('.pagination, .wp-pagenavi, .page-numbers');
+      if ($pagination.length > 0) {
+        // Try to find the last page number
+        const pageLinks = $pagination.find('a').toArray();
+        const pageNumbers: number[] = [];
+
+        pageLinks.forEach((link) => {
+          const href = $(link).attr('href') || '';
+          const text = $(link).text().trim();
+
+          // Extract page number from URL like /daftar-batch/page/5/
+          const pageMatch = href.match(/\/daftar-batch\/page\/(\d+)\//);
+          if (pageMatch) {
+            pageNumbers.push(parseInt(pageMatch[1]));
+          }
+
+          // Also check text content for page numbers
+          const numMatch = text.match(/^\d+$/);
+          if (numMatch) {
+            pageNumbers.push(parseInt(numMatch[0]));
+          }
+        });
+
+        if (pageNumbers.length > 0) {
+          totalPages = Math.max(...pageNumbers);
+        }
+      }
+
+      // Estimate total items based on current page results and total pages
+      if (batches.length > 0) {
+        totalItems = Math.max(totalItems, batches.length * totalPages);
+      }
+
+      return {
+        data: batches.slice(0, limit),
+        pagination: {
+          currentPage: pageNum,
+          totalPages: totalPages,
+          totalItems: totalItems,
+        }
+      };
+
+    } catch (error) {
+      console.error('Puppeteer batch scraping failed:', error);
+      throw error;
+    } finally {
+      // Clean up browser
+      if (page) {
+        try {
+          await page.close();
+        } catch (e) {
+          console.error('Error closing page:', e);
+        }
+      }
+      if (browser) {
+        try {
+          await browser.close();
+        } catch (e) {
+          console.error('Error closing browser:', e);
+        }
+      }
+    }
   }
 
   /**

@@ -4,12 +4,13 @@ import { load } from 'cheerio';
 export const scrapeAnimeItems = ($: any, container?: string): any[] => {
   const items: any[] = [];
 
-  // Try different selectors
+  // Try different selectors - be more specific to avoid nested matches
   let $items = $('div.thumb');
 
   // If no thumb elements found, try article tags (for search results, etc)
   if ($items.length === 0) {
-    $items = $('article.animpost, div.animepost');
+    // Use more specific selector to avoid matching nested elements
+    $items = $('article.animpost, div.animepost').not('div.animepost div.animepost, div.animepost article.animpost');
   }
 
   console.log(`Found ${$items.length} thumb/article elements`);
@@ -27,25 +28,25 @@ export const scrapeAnimeItems = ($: any, container?: string): any[] => {
       if (href && text && href.includes('/anime/') && !href.includes('#') && text.length > 2) {
         // Extract title from link text, assuming format like "[Title TV  rating Title Status]"
         let title = text;
-        
+
         // Remove brackets if present
         if (title.startsWith('[') && title.endsWith(']')) {
           title = title.slice(1, -1);
         }
-        
+
         // Split by status and take the first part
         const statusMatch = title.match(/\s+(Ongoing|Completed)$/i);
         if (statusMatch) {
           title = title.substring(0, statusMatch.index);
         }
-        
+
         // The title appears twice: "Title Type  rating Title"
         // Take the part before the rating
         const ratingMatch = title.match(/\s*[\d.]+\s*/);
         if (ratingMatch) {
           title = title.substring(0, ratingMatch.index).trim();
         }
-        
+
         // Remove type indicators
         title = title.replace(/\s+(TV|OVA|ONA|Special|Movie)$/i, '').trim();
 
@@ -79,11 +80,14 @@ export const scrapeAnimeItems = ($: any, container?: string): any[] => {
     });
   }
 
-  console.log(`Extracted ${items.length} anime items`);
-  return items;
-};
+  // Remove duplicates based on ID
+  const uniqueItems = items.filter((item, index, self) =>
+    index === self.findIndex(i => i.id === item.id)
+  );
 
-// Helper function to scrape movie items from .animpost or similar
+  console.log(`Extracted ${items.length} anime items, ${uniqueItems.length} unique`);
+  return uniqueItems;
+};// Helper function to scrape movie items from .animpost or similar
 export const scrapeMovieItems = ($: any): any[] => {
   const items: any[] = [];
 
