@@ -4,6 +4,82 @@ import { SITE_CONFIG } from '../config';
 import { collectVideoSourcesFromPlayerOptions } from './episodeScraper';
 import { EpisodeData } from '@/types/anime';
 
+// Function to resolve embed URLs to direct media URLs
+async function resolveEmbedUrl(embedUrl: string): Promise<string> {
+  // Check if this is a Wibufile embed URL
+  if (embedUrl.includes('api.wibufile.com/embed/')) {
+    let browser: Browser | null = null;
+    let page: Page | null = null;
+
+    try {
+      console.log(`🔗 Resolving Wibufile embed URL: ${embedUrl}`);
+      const session = await createOptimizedScrapingSession({
+        blockResources: false
+      });
+      browser = session.browser;
+      page = session.page;
+
+      await navigateOptimized(page, embedUrl, {
+        waitUntil: 'networkidle2',
+        timeout: 30000
+      });
+
+      // Wait for the page to load and extract video sources
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Look for direct video URLs in various ways
+      const videoUrl = await page.evaluate(() => {
+        // Check for video elements
+        const videoElements = document.querySelectorAll('video source, video');
+        for (const video of videoElements) {
+          const src = video.getAttribute('src');
+          if (src && (src.includes('.mp4') || src.includes('.m3u8'))) {
+            return src;
+          }
+        }
+
+        // Check for script tags containing video URLs
+        const scripts = document.querySelectorAll('script');
+        for (const script of scripts) {
+          const content = script.textContent || '';
+          // Look for MP4 URLs in script content
+          const mp4Match = content.match(/"?([^"\s]+\.mp4[^"\s]*)"?/);
+          if (mp4Match && mp4Match[1]) {
+            return mp4Match[1];
+          }
+        }
+
+        // Check for download links
+        const downloadLinks = document.querySelectorAll('a[href*=".mp4"], a[href*="download"]');
+        for (const link of downloadLinks) {
+          const href = link.getAttribute('href');
+          if (href && href.includes('.mp4')) {
+            return href;
+          }
+        }
+
+        return null;
+      });
+
+      if (videoUrl) {
+        console.log(`✅ Resolved to direct URL: ${videoUrl.substring(0, 50)}...`);
+        return videoUrl.startsWith('//') ? `https:${videoUrl}` : videoUrl;
+      } else {
+        console.log(`⚠️ Could not resolve embed URL: ${embedUrl}`);
+        return embedUrl; // Return original if resolution fails
+      }
+    } catch (error) {
+      console.error(`❌ Error resolving embed URL ${embedUrl}:`, error);
+      return embedUrl; // Return original on error
+    } finally {
+      await cleanupBrowser(browser, page);
+    }
+  }
+
+  // For other embed URLs, return as-is for now
+  return embedUrl;
+}
+
 async function extractEpisodeMetadata(page: Page): Promise<import('@/types/anime').EpisodeMetadata> {
   try {
     const metadata = await page.evaluate(() => {
@@ -124,9 +200,26 @@ export class DynamicEpisodeScraper {
 
       console.log(`✅ Extracted ${servers.length} video sources from player options`);
 
+      // Resolve any embed URLs to direct media URLs
+      console.log('🔗 Resolving embed URLs...');
+      const resolvedServers = await Promise.all(
+        servers.map(async (server) => {
+          if (server.url && server.url.includes('embed')) {
+            const resolvedUrl = await resolveEmbedUrl(server.url);
+            return {
+              ...server,
+              url: resolvedUrl
+            };
+          }
+          return server;
+        })
+      );
+
+      console.log(`✅ Resolved ${resolvedServers.length} server URLs`);
+
       return {
         ...metadata,
-        servers
+        servers: resolvedServers
       };
     } catch (error) {
       console.error(`❌ Error scraping ${episodeSlug}:`, error);
