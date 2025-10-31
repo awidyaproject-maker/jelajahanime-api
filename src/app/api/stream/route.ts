@@ -1,10 +1,9 @@
 import { NextResponse, NextRequest } from 'next/server';
-import { EpisodeScraper } from '@/lib/scrapers';
-import { ApiResponse, StreamServer } from '@/types/anime';
+import { EpisodeScraper } from '@/lib/scrapers/episodeScraper';
+import { ApiResponse, EpisodeData } from '@/types/anime';
 
-interface StreamData {
+interface StreamResponse extends EpisodeData {
   episodeId: string;
-  servers: StreamServer[];
 }
 
 export async function GET(request: NextRequest) {
@@ -20,22 +19,26 @@ export async function GET(request: NextRequest) {
       }, { status: 400 });
     }
 
-  const servers = await EpisodeScraper.getEpisodeLinks(episodeId);
-    
-    const response: ApiResponse<StreamData> = {
+    console.log('🎬 API CALL - Stream Episode ID:', episodeId);
+
+    // Use EpisodeScraper.getEpisodeData() to get full episode data with properly scraped servers
+    const episodeData = await EpisodeScraper.getEpisodeData(episodeId);
+
+    const response: ApiResponse<StreamResponse> = {
       success: true,
       data: {
         episodeId,
-        servers,
+        ...episodeData
       },
       timestamp: new Date().toISOString(),
     };
-    
+
     return NextResponse.json(response);
   } catch (error) {
+    console.error('❌ API Error:', error);
     return NextResponse.json({
       success: false,
-      error: error instanceof Error ? error.message : 'Terjadi kesalahan saat mengambil stream server',
+      error: error instanceof Error ? error.message : 'Terjadi kesalahan saat mengambil data stream',
       timestamp: new Date().toISOString(),
     }, { status: 500 });
   }
