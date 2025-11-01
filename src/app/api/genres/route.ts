@@ -1,19 +1,19 @@
 import { NextResponse } from 'next/server';
 import { HomeScraper } from '@/lib/scrapers';
-import { ApiResponse, Genre } from '@/types/anime';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-  const data = await HomeScraper.getGenres() as Genre[];
-    
-    const response: ApiResponse<Genre[]> = {
+    const genres = await HomeScraper.getGenres();
+
+    const response = {
       success: true,
-      data,
+      data: genres,
+      total: genres.length,
       timestamp: new Date().toISOString(),
     };
-    
+
     return NextResponse.json(response);
   } catch (error) {
     return NextResponse.json({

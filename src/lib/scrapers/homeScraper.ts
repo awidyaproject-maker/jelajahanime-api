@@ -315,79 +315,142 @@ export class HomeScraper {
   }
 
   /**
-   * Get All Genres
+   * Get All Genres from daftar-anime-2 page
    */
   static async getGenres() {
-    const cacheKey = 'genres:all:v2';
+    const cacheKey = 'genres:all:v3';
 
     return cacheManager.getOrSet(cacheKey, async () => {
       try {
-        const { data } = await axiosInstance.get('/');
-        const $ = load(data);
-        const genres: Genre[] = [];
+        // First try with Puppeteer for Cloudflare bypass
+        const html = await this.scrapeGenresWithPuppeteer();
+        const $ = load(html);
+        const genres = this.extractGenresFromHtml($);
 
-        // Try multiple selectors for genres - expanded list
-        const selectors = [
-          '.genre-list a',
-          '.genres a',
-          'nav a[href*="/genre/"]',
-          'a[href*="/genre/"]',
-          '.menu-item a[href*="/genre/"]',
-          'li a[href*="/genre/"]',
-          '.navbar a[href*="/genre/"]',
-          '.nav a[href*="/genre/"]',
-          '.sidebar a[href*="/genre/"]',
-          '.widget a[href*="/genre/"]',
-          'aside a[href*="/genre/"]',
-          '.category-list a[href*="/genre/"]',
-          '.tag-list a[href*="/genre/"]'
-        ];
-
-        for (const selector of selectors) {
-          $(selector).each((_, el) => {
-            const $el = $(el);
-            const href = $el.attr('href');
-            const text = $el.text().trim();
-
-            if (href && href.includes('/genre/') && text && !genres.find(g => g.id === href.split('/').filter(Boolean).pop())) {
-              genres.push({
-                id: href.split('/').filter(Boolean).pop() || '',
-                name: text,
-                url: href,
-              });
-            }
-          });
-
-          if (genres.length > 0) break; // Stop if we found genres
+        if (genres.length > 0) {
+          return genres;
         }
 
-        // Always include additional common genres that users expect
-        const additionalGenres = [
-          { id: 'shounen', name: 'Shounen', url: `${SITE_CONFIG.BASE_URL}/genre/shounen/` },
-          { id: 'isekai', name: 'Isekai', url: `${SITE_CONFIG.BASE_URL}/genre/isekai/` },
-          { id: 'seinen', name: 'Seinen', url: `${SITE_CONFIG.BASE_URL}/genre/seinen/` },
-          { id: 'reincarnation', name: 'Reincarnation', url: `${SITE_CONFIG.BASE_URL}/genre/reincarnation/` },
-          { id: 'mystery', name: 'Mystery', url: `${SITE_CONFIG.BASE_URL}/genre/mystery/` },
-          { id: 'historical', name: 'Historical', url: `${SITE_CONFIG.BASE_URL}/genre/historical/` },
-          { id: 'harem', name: 'Harem', url: `${SITE_CONFIG.BASE_URL}/genre/harem/` },
-          { id: 'ecchi', name: 'Ecchi', url: `${SITE_CONFIG.BASE_URL}/genre/ecchi/` },
-          { id: 'slice-of-life', name: 'Slice of Life', url: `${SITE_CONFIG.BASE_URL}/genre/slice-of-life/` }
-        ];
+        // Fallback to axios if Puppeteer fails or returns no genres
+        console.log('Puppeteer scraping returned no genres, trying axios fallback...');
+        const { data } = await axiosInstance.get('/daftar-anime-2/');
+        const $axios = load(data);
+        const axiosGenres = this.extractGenresFromHtml($axios);
 
-        // Merge scraped genres with additional genres, avoiding duplicates
-        for (const genre of additionalGenres) {
-          if (!genres.find(g => g.id === genre.id)) {
-            genres.push(genre);
-          }
+        if (axiosGenres.length > 0) {
+          return axiosGenres;
         }
 
-        return genres;
+        // Final fallback to mock data
+        console.error('Both Puppeteer and axios failed to scrape genres, using mock data');
+        return this.getMockGenresData();
+
       } catch (error) {
         console.error('Error scraping genres, using fallback data:', error);
-        // Return comprehensive fallback genres list
         return this.getMockGenresData();
       }
     });
+  }
+
+  /**
+   * Scrape genres page with Puppeteer for Cloudflare bypass
+   */
+  private static async scrapeGenresWithPuppeteer(): Promise<string> {
+    let browser: Browser | null = null;
+    let page: Page | null = null;
+
+    try {
+      browser = await puppeteer.launch({
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--disable-gpu',
+          '--disable-web-security',
+          '--disable-features=VizDisplayCompositor',
+          '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36'
+        ]
+      });
+
+      page = await browser.newPage();
+      await page.setViewport({ width: 1366, height: 768 });
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36');
+
+      await page.setExtraHTTPHeaders({
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept-Language': 'en-US,en;q=0.9,id;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+      });
+
+      const genresUrl = `${SITE_CONFIG.BASE_URL}/daftar-anime-2/`;
+
+      await page.goto(genresUrl, {
+        waitUntil: 'networkidle2',
+        timeout: 30000
+      });
+
+      // Wait for dynamic content
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      const content = await page.content();
+      return content;
+
+    } catch (error) {
+      console.error('Puppeteer genres scraping failed:', error);
+      throw error;
+    } finally {
+      if (page) {
+        try {
+          await page.close();
+        } catch (e) {
+          console.error('Error closing page:', e);
+        }
+      }
+      if (browser) {
+        try {
+          await browser.close();
+        } catch (e) {
+          console.error('Error closing browser:', e);
+        }
+      }
+    }
+  }
+
+  /**
+   * Extract genres from HTML using the specific structure
+   */
+  private static extractGenresFromHtml($: any): Array<{name: string, slug: string, url: string}> {
+    const genres: Array<{name: string, slug: string, url: string}> = [];
+
+    // Target the specific structure: td.filter_act.genres > label.tax_fil
+    $('td.filter_act.genres label.tax_fil').each((_: any, el: any) => {
+      const $label = $(el);
+      const text = $label.text().trim();
+      const $input = $label.find('input[name="genre[]"]');
+      const slug = $input.attr('value');
+
+      if (text && slug) {
+        genres.push({
+          name: text,
+          slug: slug,
+          url: `${SITE_CONFIG.BASE_URL}/genre/${slug}/`
+        });
+      }
+    });
+
+    // Remove duplicates based on slug
+    const uniqueGenres = genres.filter((genre, index, self) =>
+      index === self.findIndex(g => g.slug === genre.slug)
+    );
+
+    return uniqueGenres;
   }
 
   /**
@@ -397,29 +460,28 @@ export class HomeScraper {
     console.log('Using mock genres data due to site accessibility issues');
 
     return [
-      { id: 'action', name: 'Action', url: `${SITE_CONFIG.BASE_URL}/genre/action/` },
-      { id: 'adventure', name: 'Adventure', url: `${SITE_CONFIG.BASE_URL}/genre/adventure/` },
-      { id: 'comedy', name: 'Comedy', url: `${SITE_CONFIG.BASE_URL}/genre/comedy/` },
-      { id: 'drama', name: 'Drama', url: `${SITE_CONFIG.BASE_URL}/genre/drama/` },
-      { id: 'fantasy', name: 'Fantasy', url: `${SITE_CONFIG.BASE_URL}/genre/fantasy/` },
-      { id: 'romance', name: 'Romance', url: `${SITE_CONFIG.BASE_URL}/genre/romance/` },
-      { id: 'sci-fi', name: 'Sci-Fi', url: `${SITE_CONFIG.BASE_URL}/genre/sci-fi/` },
-      { id: 'school', name: 'School', url: `${SITE_CONFIG.BASE_URL}/genre/school/` },
-      { id: 'super-power', name: 'Super Power', url: `${SITE_CONFIG.BASE_URL}/genre/super-power/` },
-      { id: 'sports', name: 'Sports', url: `${SITE_CONFIG.BASE_URL}/genre/sports/` },
-      { id: 'supernatural', name: 'Supernatural', url: `${SITE_CONFIG.BASE_URL}/genre/supernatural/` },
-      { id: 'teamsports', name: 'TeamSports', url: `${SITE_CONFIG.BASE_URL}/genre/teamsports/` },
-      { id: 'team', name: 'Team', url: `${SITE_CONFIG.BASE_URL}/genre/team/` },
-      // Additional genres requested by user
-      { id: 'shounen', name: 'Shounen', url: `${SITE_CONFIG.BASE_URL}/genre/shounen/` },
-      { id: 'isekai', name: 'Isekai', url: `${SITE_CONFIG.BASE_URL}/genre/isekai/` },
-      { id: 'seinen', name: 'Seinen', url: `${SITE_CONFIG.BASE_URL}/genre/seinen/` },
-      { id: 'reincarnation', name: 'Reincarnation', url: `${SITE_CONFIG.BASE_URL}/genre/reincarnation/` },
-      { id: 'mystery', name: 'Mystery', url: `${SITE_CONFIG.BASE_URL}/genre/mystery/` },
-      { id: 'historical', name: 'Historical', url: `${SITE_CONFIG.BASE_URL}/genre/historical/` },
-      { id: 'harem', name: 'Harem', url: `${SITE_CONFIG.BASE_URL}/genre/harem/` },
-      { id: 'ecchi', name: 'Ecchi', url: `${SITE_CONFIG.BASE_URL}/genre/ecchi/` },
-      { id: 'slice-of-life', name: 'Slice of Life', url: `${SITE_CONFIG.BASE_URL}/genre/slice-of-life/` }
+      { name: 'Action', slug: 'action', url: `${SITE_CONFIG.BASE_URL}/genre/action/` },
+      { name: 'Adventure', slug: 'adventure', url: `${SITE_CONFIG.BASE_URL}/genre/adventure/` },
+      { name: 'Comedy', slug: 'comedy', url: `${SITE_CONFIG.BASE_URL}/genre/comedy/` },
+      { name: 'Drama', slug: 'drama', url: `${SITE_CONFIG.BASE_URL}/genre/drama/` },
+      { name: 'Fantasy', slug: 'fantasy', url: `${SITE_CONFIG.BASE_URL}/genre/fantasy/` },
+      { name: 'Romance', slug: 'romance', url: `${SITE_CONFIG.BASE_URL}/genre/romance/` },
+      { name: 'Sci-Fi', slug: 'sci-fi', url: `${SITE_CONFIG.BASE_URL}/genre/sci-fi/` },
+      { name: 'School', slug: 'school', url: `${SITE_CONFIG.BASE_URL}/genre/school/` },
+      { name: 'Super Power', slug: 'super-power', url: `${SITE_CONFIG.BASE_URL}/genre/super-power/` },
+      { name: 'Sports', slug: 'sports', url: `${SITE_CONFIG.BASE_URL}/genre/sports/` },
+      { name: 'Supernatural', slug: 'supernatural', url: `${SITE_CONFIG.BASE_URL}/genre/supernatural/` },
+      { name: 'Team Sports', slug: 'teamsports', url: `${SITE_CONFIG.BASE_URL}/genre/teamsports/` },
+      { name: 'Team', slug: 'team', url: `${SITE_CONFIG.BASE_URL}/genre/team/` },
+      { name: 'Shounen', slug: 'shounen', url: `${SITE_CONFIG.BASE_URL}/genre/shounen/` },
+      { name: 'Isekai', slug: 'isekai', url: `${SITE_CONFIG.BASE_URL}/genre/isekai/` },
+      { name: 'Seinen', slug: 'seinen', url: `${SITE_CONFIG.BASE_URL}/genre/seinen/` },
+      { name: 'Reincarnation', slug: 'reincarnation', url: `${SITE_CONFIG.BASE_URL}/genre/reincarnation/` },
+      { name: 'Mystery', slug: 'mystery', url: `${SITE_CONFIG.BASE_URL}/genre/mystery/` },
+      { name: 'Historical', slug: 'historical', url: `${SITE_CONFIG.BASE_URL}/genre/historical/` },
+      { name: 'Harem', slug: 'harem', url: `${SITE_CONFIG.BASE_URL}/genre/harem/` },
+      { name: 'Ecchi', slug: 'ecchi', url: `${SITE_CONFIG.BASE_URL}/genre/ecchi/` },
+      { name: 'Slice of Life', slug: 'slice-of-life', url: `${SITE_CONFIG.BASE_URL}/genre/slice-of-life/` }
     ];
   }
 }
