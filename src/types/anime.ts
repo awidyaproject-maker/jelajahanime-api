@@ -50,6 +50,16 @@ export interface EpisodeData extends EpisodeMetadata {
     url: string;
     type: string;
   }>;
+  downloads: Array<{
+    type: string;
+    qualities: Array<{
+      quality: string;
+      servers: Array<{
+        name: string;
+        url: string;
+      }>;
+    }>;
+  }>;
 }
 
 export interface StreamServer {
